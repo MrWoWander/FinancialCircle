@@ -8,6 +8,7 @@ on:
 jobs:
   build-and-deploy:
     runs-on: macos-latest
+    environment: Main
 
     steps:
       # Шаг 1: Клонирование репозитория
