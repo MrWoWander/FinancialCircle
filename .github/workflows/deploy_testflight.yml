@@ -15,7 +15,19 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v3
 
-      # Шаг 2: Поиск файла .xcodeproj
+      # Шаг 2: Установка профиля профилирования
+      - name: Install Provisioning Profile
+        run: |
+          echo "${{ secrets.PROVISIONING_PROFILE }}" | base64 --decode > ./YourProfile.mobileprovision
+          mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
+          cp ./YourProfile.mobileprovision ~/Library/MobileDevice/Provisioning\ Profiles/
+
+      # Шаг 3: Создание AuthKey.p8 из секрета
+      - name: Create AuthKey.p8 from secret
+        run: |
+          echo "${{ secrets.APP_STORE_CONNECT_KEY }}" > ./AuthKey.p8
+
+      # Шаг 4: Поиск имени проекта
       - name: Find .xcodeproj File
         id: find_project
         run: |
@@ -31,50 +43,46 @@ jobs:
           echo "PROJECT_NAME=$PROJECT_NAME" >> $GITHUB_ENV
           echo "PROJECT_FILE=$PROJECT_FILE" >> $GITHUB_ENV
 
-      # Шаг 3: Установка сертификата (.p12)
-      - name: Set up Signing Certificates
-        uses: apple-actions/import-codesign-certs@v1
-        with:
-          p12-file-base64: ${{ secrets.P12_FILE }}
-          p12-password: ${{ secrets.P12_PASSWORD }}
-
-      # Шаг 4: Установка профиля профилирования
-      - name: Install Provisioning Profile
-        run: |
-          echo "${{ secrets.PROVISIONING_PROFILE }}" | base64 --decode > ./YourProfile.mobileprovision
-          mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
-          cp ./YourProfile.mobileprovision ~/Library/MobileDevice/Provisioning\ Profiles/
-
       # Шаг 5: Сборка приложения
       - name: Build iOS app
         run: |
+          AUTH_KEY_PATH="$(pwd)/AuthKey.p8"
           xcodebuild clean archive \
             -project "${PROJECT_FILE}" \
             -scheme "${PROJECT_NAME}" \
             -archivePath "${{ github.workspace }}/build/${PROJECT_NAME}.xcarchive" \
+            -authenticationKeyID "${{ secrets.API_KEY_ID }}" \
+            -authenticationKeyIssuerID "${{ secrets.API_ISSUER_ID }}" \
+            -authenticationKeyPath "${AUTH_KEY_PATH}" \
             DEVELOPMENT_TEAM="${{ secrets.DEVELOPMENT_TEAM_ID }}" \
-            CODE_SIGN_IDENTITY="Apple Distribution" \
             -allowProvisioningUpdates
 
       # Шаг 6: Экспорт архива в .ipa
       - name: Export IPA
         run: |
+          AUTH_KEY_PATH="$(pwd)/AuthKey.p8"
           xcodebuild -exportArchive \
             -archivePath "${{ github.workspace }}/build/${PROJECT_NAME}.xcarchive" \
             -exportPath "${{ github.workspace }}/build" \
             -exportOptionsPlist ExportOptions.plist \
+            -authenticationKeyID "${{ secrets.API_KEY_ID }}" \
+            -authenticationKeyIssuerID "${{ secrets.API_ISSUER_ID }}" \
+            -authenticationKeyPath "${AUTH_KEY_PATH}" \
             DEVELOPMENT_TEAM="${{ secrets.DEVELOPMENT_TEAM_ID }}" \
             -allowProvisioningUpdates
 
-      # Шаг 7: Загрузка .ipa в TestFlight через API Key
+      # Шаг 7: Загрузка .ipa в TestFlight
       - name: Upload to TestFlight
         run: |
+          AUTH_KEY_PATH="$(pwd)/AuthKey.p8"
           xcrun altool --upload-app \
             -f "${{ github.workspace }}/build/${PROJECT_NAME}.ipa" \
             -t ios \
             --apiKey "${{ secrets.API_KEY_ID }}" \
             --apiIssuer "${{ secrets.API_ISSUER_ID }}"
 
-      # Шаг 8: Очистка билдов
-      - name: Clean up build files
-        run: rm -rf "${{ github.workspace }}/build
+      # Шаг 8: Очистка временных файлов
+      - name: Clean up temporary files
+        run: |
+          rm -f ./AuthKey.p8
+          rm -f ./YourProfile.mobileprovision
