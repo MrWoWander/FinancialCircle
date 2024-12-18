@@ -1,0 +1,57 @@
+name: Deploy to TestFlight
+
+on:
+  push:
+    branches:
+      - main  # Ветка для деплоя
+
+jobs:
+  build-and-deploy:
+    runs-on: macos-latest
+
+    steps:
+      # Шаг 1: Клонирование репозитория
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      # Шаг 2: Установка сертификатов и профилей подписания
+      - name: Set up Signing Certificates
+        uses: apple-actions/import-codesign-certs@v1
+        with:
+          p12-file-base64: ${{ secrets.P12_FILE }}             # Сертификат в Base64
+          p12-password: ${{ secrets.P12_PASSWORD }}           # Пароль для p12
+          provisioning-profile-base64: ${{ secrets.PROVISIONING_PROFILE }} # Профиль профилирования
+
+      # Шаг 3: Сборка приложения с использованием DEVELOPMENT_TEAM из Secrets
+      - name: Build iOS app
+        run: |
+          xcodebuild clean archive \
+            -workspace YourApp.xcworkspace \
+            -scheme YourAppScheme \
+            -archivePath ${{ github.workspace }}/build/YourApp.xcarchive \
+            DEVELOPMENT_TEAM="${{ secrets.DEVELOPMENT_TEAM_ID }}" \
+            CODE_SIGN_IDENTITY="Apple Distribution" \
+            -allowProvisioningUpdates
+
+      # Шаг 4: Экспорт архива в .ipa
+      - name: Export IPA
+        run: |
+          xcodebuild -exportArchive \
+            -archivePath ${{ github.workspace }}/build/YourApp.xcarchive \
+            -exportPath ${{ github.workspace }}/build \
+            -exportOptionsPlist ExportOptions.plist \
+            DEVELOPMENT_TEAM="${{ secrets.DEVELOPMENT_TEAM_ID }}" \
+            -allowProvisioningUpdates
+
+      # Шаг 5: Загрузка .ipa в TestFlight через altool
+      - name: Upload to TestFlight
+        run: |
+          xcrun altool --upload-app \
+            -f ${{ github.workspace }}/build/YourApp.ipa \
+            -t ios \
+            --apiKey ${{ secrets.API_KEY_ID }} \
+            --apiIssuer ${{ secrets.API_ISSUER_ID }}
+
+      # Шаг 6: Очистка билдов
+      - name: Clean up build files
+        run: rm -rf ${{ github.workspace }}/build
