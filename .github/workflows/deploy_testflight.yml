@@ -59,7 +59,32 @@ jobs:
             PROVISIONING_PROFILE_SPECIFIER="FC" \
             -allowProvisioningUpdates
 
-      # Шаг 6: Экспорт архива в .ipa
+      # Шаг 6: Создание файла ExportOptions.plist
+      - name: Create ExportOptions.plist
+        run: |
+          cat <<EOF > ExportOptions.plist
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>method</key>
+              <string>app-store</string>
+              <key>teamID</key>
+              <string>${{ secrets.DEVELOPMENT_TEAM_ID }}</string>
+              <key>provisioningProfiles</key>
+              <dict>
+                  <key>ru.bpmteamsnew.financial-circle</key>
+                  <string>FC</string>
+              </dict>
+              <key>uploadBitcode</key>
+              <false/>
+              <key>uploadSymbols</key>
+              <true/>
+          </dict>
+          </plist>
+          EOF
+
+      # Шаг 7: Экспорт архива в .ipa
       - name: Export IPA
         run: |
           xcodebuild -exportArchive \
@@ -69,9 +94,10 @@ jobs:
             -authenticationKeyID "${{ secrets.API_KEY_ID }}" \
             -authenticationKeyIssuerID "${{ secrets.API_ISSUER_ID }}" \
             DEVELOPMENT_TEAM="${{ secrets.DEVELOPMENT_TEAM_ID }}" \
+            PROVISIONING_PROFILE_SPECIFIER="FC" \
             -allowProvisioningUpdates
 
-      # Шаг 7: Загрузка .ipa в TestFlight
+      # Шаг 8: Загрузка .ipa в TestFlight
       - name: Upload to TestFlight
         run: |
           AUTH_KEY_PATH="$(pwd)/AuthKey.p8"
@@ -80,10 +106,3 @@ jobs:
             -t ios \
             --apiKey "${{ secrets.API_KEY_ID }}" \
             --apiIssuer "${{ secrets.API_ISSUER_ID }}"
-
-      # Шаг 8: Очистка временных файлов
-      - name: Clean up keychain and provisioning profile
-        if: ${{ always() }}
-        run: |
-          security delete-keychain $RUNNER_TEMP/app-signing.keychain-db
-          rm ~/Library/MobileDevice/Provisioning\ Profiles/build_pp.mobileprovision
