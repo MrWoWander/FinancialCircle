@@ -94,7 +94,7 @@ jobs:
             -authenticationKeyID "${{ secrets.API_KEY_ID }}" \
             -authenticationKeyIssuerID "${{ secrets.API_ISSUER_ID }}" \
             DEVELOPMENT_TEAM="${{ secrets.DEVELOPMENT_TEAM_ID }}" \
-            PROVISIONING_PROFILE_SPECIFIER="FC" \
+            PROVISIONING_PROFILE_SPECIFIER="FC Dist" \
             -allowProvisioningUpdates
 
       # Шаг 8: Загрузка .ipa в TestFlight
