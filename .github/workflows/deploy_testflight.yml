@@ -15,7 +15,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v3
 
-      - name: Import code sign
+      - name: Import code sign dev
         uses: Apple-Actions/import-codesign-certs@v1
         with:
           p12-file-base64: ${{ secrets.P12_FILE }}
@@ -74,12 +74,12 @@ jobs:
               <key>provisioningProfiles</key>
               <dict>
                   <key>ru.bpmteamsnew.financial-circle</key>
-                  <string>FC</string>
+                  <string>FC Dist</string>
               </dict>
-              <key>uploadBitcode</key>
-              <false/>
               <key>uploadSymbols</key>
               <true/>
+              <key>uploadBitcode</key>
+              <false/>
           </dict>
           </plist>
           EOF
@@ -99,10 +99,9 @@ jobs:
 
       # Шаг 8: Загрузка .ipa в TestFlight
       - name: Upload to TestFlight
-        run: |
-          AUTH_KEY_PATH="$(pwd)/AuthKey.p8"
-          xcrun altool --upload-app \
-            -f "${{ github.workspace }}/build/${PROJECT_NAME}.ipa" \
-            -t ios \
-            --apiKey "${{ secrets.API_KEY_ID }}" \
-            --apiIssuer "${{ secrets.API_ISSUER_ID }}"
+        uses: Apple-Actions/upload-testflight-build@master
+        with:
+          app-path: "${{ github.workspace }}/build/${{ env.PROJECT_NAME }}.ipa"
+          issuer-id: ${{ secrets.API_ISSUER_ID }}
+          api-key-id: ${{ secrets.API_KEY_ID }}
+          api-private-key: ${{ secrets.APP_STORE_CONNECT_KEY }}
