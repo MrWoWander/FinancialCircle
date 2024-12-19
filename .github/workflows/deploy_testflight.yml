@@ -15,19 +15,55 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v3
 
-      - name: Import code sign dev
-        uses: Apple-Actions/import-codesign-certs@v1
-        with:
-          p12-file-base64: ${{ secrets.P12_FILE }}
-          p12-password: ${{ secrets.P12_PASSWORD }}
-      
-      - name: Download provisioning
-        uses: Apple-Actions/download-provisioning-profiles@v1
-        with:
-          bundle-id: ru.bpmteamsnew.financial-circle
-          issuer-id: ${{ secrets.API_ISSUER_ID }}
-          api-key-id: ${{ secrets.API_KEY_ID }}
-          api-private-key: ${{ secrets.APP_STORE_CONNECT_KEY }}  
+      # Шаг 2: Установка Fastlane
+      - name: Install Fastlane
+        run: |
+          gem install fastlane
+
+      - name: Create api_key.json
+        run: |
+          cat <<EOF > api_key.json
+          {
+            "key_id": "${{ secrets.API_KEY_ID }}",
+            "issuer_id": "${{ secrets.API_ISSUER_ID }}",
+            "key": "${{ secrets.APP_STORE_CONNECT_KEY }}",
+            "in_house": false
+          }
+          EOF
+
+          echo "Generated api_key.json:"
+          cat api_key.json
+
+      - name: Setup Keychain
+        run: |
+          security create-keychain -p my_temp_password build.keychain
+          security list-keychains -s build.keychain
+          security unlock-keychain -p my_temp_password build.keychain
+          security set-keychain-settings -lut 3600 build.keychain
+
+      # Шаг 3: Скачивание сертификатов
+      - name: Download Signing Certificates
+        run: |
+          fastlane sync_code_signing \
+            --api_key_path ./api_key.json \
+            --keychain_name build.keychain \
+            --readonly true
+
+      # Шаг 4: Скачивание профилей подписывания
+      - name: Download Provisioning Profiles
+        run: |
+          fastlane sigh download_all \
+            --api_key_path ./api_key.json \
+            --output_path ./provisioning_profiles
+
+      # Шаг 5: Импорт сертификатов
+      - name: Import Certificates
+        run: |
+          mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
+          cp ./provisioning_profiles/*.mobileprovision ~/Library/MobileDevice/Provisioning\ Profiles/
+          for CERT in ./certificates/*.p12; do
+            security import "$CERT" -k ~/Library/Keychains/login.keychain-db -P "" -T /usr/bin/codesign
+          done
 
       # Шаг 4: Поиск имени проекта
       - name: Find .xcodeproj File
