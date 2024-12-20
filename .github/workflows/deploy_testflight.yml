@@ -1,4 +1,4 @@
-name: Deploy to TestFlight
+name: Build and Upload to TestFlight
 
 on:
   push:
@@ -6,20 +6,59 @@ on:
       - main
 
 jobs:
-  build-and-deploy:
+  build-and-upload:
+    name: Build and Upload to TestFlight
     runs-on: macos-latest
     environment: Main
 
     steps:
-      # Шаг 1: Клонирование репозитория
-      - name: Checkout code
+      # 1. Клонирование репозитория
+      - name: Checkout repository
         uses: actions/checkout@v3
 
-      # Шаг 2: Установка Fastlane
-      - name: Install Fastlane
-        run: |
-          gem install fastlane
+      # # 2. Установка SSH для доступа к хранилищу сертификатов (если используется SSH)
+      # - name: Set up SSH
+      #   if: secrets.SSH_PRIVATE_KEY
+      #   run: |
+      #     mkdir -p ~/.ssh
+      #     echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
+      #     chmod 600 ~/.ssh/id_rsa
+      #     ssh-keyscan -t rsa github.com >> ~/.ssh/known_hosts
 
+      # 3. Установка Fastlane
+      - name: Install Fastlane
+        run: gem install fastlane
+
+      # 4. Поиск .xcodeproj файла
+      - name: Find .xcodeproj File
+        id: find_project
+        run: |
+          PROJECT_FILE=$(find . -maxdepth 1 -name "*.xcodeproj" | head -n 1)
+          if [ -z "$PROJECT_FILE" ]; then
+            echo "❌ No .xcodeproj file found!"
+            exit 1
+          fi
+          echo "Found project: $PROJECT_FILE"
+          echo "PROJECT_NAME=$(basename $PROJECT_FILE .xcodeproj)" >> $GITHUB_ENV
+
+      # 5. Извлечение BUNDLE_IDENTIFIER из project.pbxproj
+      - name: Extract BUNDLE_IDENTIFIER
+        id: extract_bundle_id
+        run: |
+          PBXPROJ_PATH="${{ env.PROJECT_NAME }}.xcodeproj/project.pbxproj"
+          if [ ! -f "$PBXPROJ_PATH" ]; then
+            echo "❌ File $PBXPROJ_PATH not found!"
+            exit 1
+          fi
+          BUNDLE_IDENTIFIER=$(grep -m 1 'PRODUCT_BUNDLE_IDENTIFIER' "$PBXPROJ_PATH" | sed -e 's/.*PRODUCT_BUNDLE_IDENTIFIER = //' -e 's/;//')
+          if [ -z "$BUNDLE_IDENTIFIER" ]; then
+            echo "❌ Bundle Identifier not found in $PBXPROJ_PATH!"
+            exit 1
+          fi
+          echo "Extracted BUNDLE_IDENTIFIER: $BUNDLE_IDENTIFIER"
+          echo "BUNDLE_IDENTIFIER=$BUNDLE_IDENTIFIER" >> $GITHUB_ENV
+
+      # 6. Создание файла api_key.json для App Store Connect
       - name: Create api_key.json
         run: |
           cat <<EOF > api_key.json
@@ -31,113 +70,30 @@ jobs:
           }
           EOF
 
-          echo "Generated api_key.json:"
-          cat api_key.json
-
-      - name: Setup Keychain
+      # 7. Синхронизация сертификатов и профилей для Development
+      - name: Sync Development Provisioning Profiles
+        env:
+          MATCH_PASSWORD: ${{ secrets.MATCH_PASSWORD }}
         run: |
-          security create-keychain -p my_temp_password build.keychain
-          security list-keychains -s build.keychain
-          security unlock-keychain -p my_temp_password build.keychain
-          security set-keychain-settings -lut 3600 build.keychain
+          fastlane match development \
+            --app_identifier "${{ env.BUNDLE_IDENTIFIER }}" \
+            --api_key_path api_key.json
 
-      # Шаг 3: Скачивание сертификатов
-      - name: Download Signing Certificates
+      # 8. Синхронизация сертификатов и профилей для App Store
+      - name: Sync App Store Provisioning Profiles
+        env:
+          MATCH_PASSWORD: ${{ secrets.MATCH_PASSWORD }}
         run: |
-          fastlane sync_code_signing \
-            --api_key_path ./api_key.json \
-            --keychain_name build.keychain \
-            --readonly true
+          fastlane match appstore \
+            --app_identifier "${{ env.BUNDLE_IDENTIFIER }}" \
+            --api_key_path api_key.json
 
-      # Шаг 4: Скачивание профилей подписывания
-      - name: Download Provisioning Profiles
+      # 9. Сборка приложения
+      - name: Build the app
         run: |
-          fastlane sigh download_all \
-            --api_key_path ./api_key.json \
-            --output_path ./provisioning_profiles
+          fastlane gym --scheme "${{ env.PROJECT_NAME }}" --export-method app-store
 
-      # Шаг 5: Импорт сертификатов
-      - name: Import Certificates
-        run: |
-          mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
-          cp ./provisioning_profiles/*.mobileprovision ~/Library/MobileDevice/Provisioning\ Profiles/
-          for CERT in ./certificates/*.p12; do
-            security import "$CERT" -k ~/Library/Keychains/login.keychain-db -P "" -T /usr/bin/codesign
-          done
-
-      # Шаг 4: Поиск имени проекта
-      - name: Find .xcodeproj File
-        id: find_project
-        run: |
-          echo "Looking for .xcodeproj file in repository root..."
-          PROJECT_FILE=$(find . -maxdepth 1 -name "*.xcodeproj" | head -n 1)
-          if [ -z "$PROJECT_FILE" ]; then
-            echo "❌ No .xcodeproj file found in the repository root!"
-            exit 1
-          fi
-          PROJECT_NAME=$(basename "$PROJECT_FILE" .xcodeproj)
-          echo "✅ Found .xcodeproj file: $PROJECT_FILE"
-          echo "✅ Project Name: $PROJECT_NAME"
-          echo "PROJECT_NAME=$PROJECT_NAME" >> $GITHUB_ENV
-          echo "PROJECT_FILE=$PROJECT_FILE" >> $GITHUB_ENV
-
-      # Шаг 5: Сборка приложения
-      - name: Build iOS app
-        run: |
-          xcodebuild clean archive \
-            -project "${PROJECT_FILE}" \
-            -scheme "${PROJECT_NAME}" \
-            -archivePath "${{ github.workspace }}/build/${PROJECT_NAME}.xcarchive" \
-            -sdk iphoneos \
-            -authenticationKeyID "${{ secrets.API_KEY_ID }}" \
-            -authenticationKeyIssuerID "${{ secrets.API_ISSUER_ID }}" \
-            DEVELOPMENT_TEAM="${{ secrets.DEVELOPMENT_TEAM_ID }}" \
-            PROVISIONING_PROFILE_SPECIFIER="FC" \
-            -allowProvisioningUpdates
-
-      # Шаг 6: Создание файла ExportOptions.plist
-      - name: Create ExportOptions.plist
-        run: |
-          cat <<EOF > ExportOptions.plist
-          <?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0">
-          <dict>
-              <key>method</key>
-              <string>app-store</string>
-              <key>teamID</key>
-              <string>${{ secrets.DEVELOPMENT_TEAM_ID }}</string>
-              <key>provisioningProfiles</key>
-              <dict>
-                  <key>ru.bpmteamsnew.financial-circle</key>
-                  <string>FC Dist</string>
-              </dict>
-              <key>uploadSymbols</key>
-              <true/>
-              <key>uploadBitcode</key>
-              <false/>
-          </dict>
-          </plist>
-          EOF
-
-      # Шаг 7: Экспорт архива в .ipa
-      - name: Export IPA
-        run: |
-          xcodebuild -exportArchive \
-            -archivePath "${{ github.workspace }}/build/${PROJECT_NAME}.xcarchive" \
-            -exportPath "${{ github.workspace }}/build" \
-            -exportOptionsPlist ExportOptions.plist \
-            -authenticationKeyID "${{ secrets.API_KEY_ID }}" \
-            -authenticationKeyIssuerID "${{ secrets.API_ISSUER_ID }}" \
-            DEVELOPMENT_TEAM="${{ secrets.DEVELOPMENT_TEAM_ID }}" \
-            PROVISIONING_PROFILE_SPECIFIER="FC Dist" \
-            -allowProvisioningUpdates
-
-      # Шаг 8: Загрузка .ipa в TestFlight
+      # 10. Загрузка в TestFlight
       - name: Upload to TestFlight
-        uses: Apple-Actions/upload-testflight-build@master
-        with:
-          app-path: "${{ github.workspace }}/build/${{ env.PROJECT_NAME }}.ipa"
-          issuer-id: ${{ secrets.API_ISSUER_ID }}
-          api-key-id: ${{ secrets.API_KEY_ID }}
-          api-private-key: ${{ secrets.APP_STORE_CONNECT_KEY }}
+        run: |
+          fastlane pilot upload --api_key_path api_key.json
